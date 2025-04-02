@@ -14,7 +14,7 @@ def apart_get_price():
     apart_price_to_csv['거래금액'] = apart_price_to_csv['거래금액'].str.replace(',', '', regex=False).astype(int).astype(str) #추후 문제 해결 필요
     apart_price_to_csv.to_csv("static/csv/apart_get_price.csv", index=False, header=False)
 
-apart_get_price()
+# apart_get_price()
 
 def apart_get_area():
     df = pd.read_csv("static/csv/apart_data.csv")
@@ -42,4 +42,4 @@ def total_data():
     merged_df = pd.concat(t_data, axis=1, ignore_index=False) #concat : csv 데이터 합침, axis : 가로 형태로 값을 계속 이어붙힘
     merged_df.to_csv("static/csv/apart_total_data.csv", index=False, header=False)
 
-total_data()
+# total_data()

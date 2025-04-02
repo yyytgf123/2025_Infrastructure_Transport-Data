@@ -2,7 +2,7 @@
 import requests
 import xml.etree.ElementTree as ET
 
-service_key = "API기입"
+service_key = "TKd2MKtGfuu+il3GE0DDo6ZWSyZNw9wf9KFneD1aFfn6oek4Gz4fedf+RJF9i0391wjTJl+Ad+jszOpQWGprew=="
 
 url = "http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo?"
 
@@ -17,9 +17,8 @@ params = {
 }
 
 response = requests.get(url, params=params)
-print(response)
+print(response.text)
 root = ET.fromstring(response.text)
-
 
 for item in root.iter("item"):
     platPlc = item.findtext("platPlc").strip() #대지위치
@@ -31,3 +30,5 @@ for item in root.iter("item"):
     print(crtnDay)
     print(etcPurps)
     print(totArea)
+
+    

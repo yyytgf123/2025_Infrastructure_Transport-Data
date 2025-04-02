@@ -4,7 +4,7 @@ import requests
 def get_xy(address):
     try:
         url = "https://dapi.kakao.com/v2/local/search/address.json?query=" + address
-        headers = {"Authorization": "KakaoAK API"}
+        headers = {"Authorization": "KakaoAK API기입"}
 
         response = requests.get(url, headers=headers)
         
