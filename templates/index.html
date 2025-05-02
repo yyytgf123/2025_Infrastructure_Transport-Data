@@ -2,67 +2,165 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Kakao 지도 시작하기</title>
+  <title>서울 아파트 추천 지도</title>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=2a1d00e233291fa1a9b086c963a32336"></script>
+  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=2a1d00e233291fa1a9b086c963a32336&libraries=services"></script>
+  <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+  <style>
+    body { margin: 0; padding: 0; height: 100vh; display: flex; font-family: 'Segoe UI', sans-serif; }
+    #map { flex-grow: 1; height: 100vh; }
+    .sidebar {
+      width: 340px; background-color: #f9f9f9; padding: 30px;
+      box-shadow: -2px 0 10px rgba(0, 0, 0, 0.1); box-sizing: border-box;
+    }
+    .sidebar label { display: block; margin-top: 15px; font-weight: bold; }
+    .sidebar input[type="number"], .sidebar input[type="text"] {
+      width: 100%; padding: 8px 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px;
+    }
+    .sidebar input[type="checkbox"] { margin-right: 8px; }
+    .sidebar button {
+      margin-top: 20px; width: 100%; padding: 10px;
+      font-size: 16px; background-color: #2a8df4; border: none; color: white;
+      font-weight: bold; border-radius: 6px; cursor: pointer;
+    }
+    .sidebar button:hover { background-color: #1668c4; }
+  </style>
 </head>
 <body>
-  <div id="map" style="width: 1920px;;height: 1020px;"></div>
-  <script>
-    kakao.maps.load(function () {
-      const mapContainer = document.getElementById('map');
-      const mapOption = {
-        center: new kakao.maps.LatLng(37.5751372942865, 127.004044861769),
-        level: 5
-      };
 
-      const map = new kakao.maps.Map(mapContainer, mapOption);
-      
-      map.addOverlayMapTypeId(kakao.maps.MapTypeId.TRAFFIC);  
+<div id="map"></div>
 
-      const markers = [];
+<form method="get" action="/" class="sidebar">
+  <h2>거주지 조건</h2>
 
-      fetch('/static/csv/apart_total_data.csv')
-        .then(response => response.text())
-        .then(csvText => {
-          const rows = csvText.trim().split("\n");
-          rows.shift(); // header 제거
+  <label for="budget">예산 (만원)</label>
+  <input type="number" name="budget" id="budget" value="{{ budget }}" required>
 
-          rows.forEach(row => {
-            const [lat, lng, name, price, area] = row.split(',');
-            const markerPosition = new kakao.maps.LatLng(parseFloat(lat), parseFloat(lng));
-            const marker = new kakao.maps.Marker({
-              position: markerPosition,
+  <label for="area">최소 면적 (㎡)</label>
+  <input type="number" name="area" id="area" value="{{ area }}" required>
+
+  <label><input type="checkbox" name="use_radius" id="use_radius" {{ 'checked' if use_radius else '' }}>반경 10km 필터 사용</label>
+
+  <label for="work_address">직장 주소</label>
+  <input type="text" name="work_address" id="work_address" value="{{ work_address or '' }}" readonly required>
+  <button type="button" onclick="openPostcode()">🔍 주소 찾기</button>
+
+  <button type="submit">📌 검색</button>
+</form>
+
+<script>
+  const userBudget = {{ budget }};
+  const userMinArea = {{ area }};
+  const workAddress = "{{ work_address }}";
+  const useRadius = {{ 'true' if use_radius else 'false' }};
+  const radiusMeter = 10000;
+
+  const markers = [];
+
+  function calculateDistance(lat1, lng1, lat2, lng2) {
+    const linePath = [new kakao.maps.LatLng(lat1, lng1), new kakao.maps.LatLng(lat2, lng2)];
+    return new kakao.maps.Polyline({ path: linePath }).getLength();
+  }
+
+  kakao.maps.load(() => {
+    const map = new kakao.maps.Map(document.getElementById('map'), {
+      center: new kakao.maps.LatLng(37.5665, 126.978),
+      level: 4
+    });
+    map.addOverlayMapTypeId(kakao.maps.MapTypeId.TRAFFIC);
+
+    fetch('/static/csv/apart_total_data.csv')
+      .then(res => res.text())
+      .then(csvText => {
+        const rows = csvText.trim().split("\n");
+        rows.shift(); // header 제거
+
+        getWorkCoordinates(workAddress, (workLat, workLng) => {
+          const workPos = new kakao.maps.LatLng(workLat, workLng);
+
+          new kakao.maps.Marker({
+            position: workPos,
+            map: map,
+            image: new kakao.maps.MarkerImage(
+              "https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png",
+              new kakao.maps.Size(50, 60),
+              { offset: new kakao.maps.Point(25, 60) }
+            ),
+            title: "직장 위치"
+          });
+
+          if (useRadius) {
+            new kakao.maps.Circle({
+              center: workPos,
+              radius: radiusMeter,
+              strokeWeight: 2,
+              strokeColor: "#FF5A5A",
+              strokeOpacity: 0.8,
+              fillColor: "#FFBABA",
+              fillOpacity: 0.3,
               map: map
             });
-            markers.push(marker);
+          }
 
-            const infowindow = new kakao.maps.InfoWindow({
-              content: 
-              `<div style="padding:5px;font-size:14px;">
-                이름 : ${name}<br>
-                가격 : ${price}만원<br>
-                면적 : ${area}㎡
-              </div>`
-            });
+          map.setCenter(workPos);
 
-            kakao.maps.event.addListener(marker, 'mouseover', function () {
-              infowindow.open(map, marker);
-            });
-            kakao.maps.event.addListener(marker, 'mouseout', function () {
-              infowindow.close();
-            });
+          rows.forEach(row => {
+            const [lat, lng, name, priceStr, areaStr] = row.split(',');
+            const price = parseInt(priceStr.replace(/,/g, ''));
+            const area = parseFloat(areaStr);
+            const aptLat = parseFloat(lat);
+            const aptLng = parseFloat(lng);
+
+            if (price <= userBudget && area >= userMinArea) {
+              const distance = calculateDistance(aptLat, aptLng, workLat, workLng);
+              if (!useRadius || distance <= radiusMeter) {
+                const marker = new kakao.maps.Marker({
+                  position: new kakao.maps.LatLng(aptLat, aptLng),
+                  map: map
+                });
+                markers.push(marker);  // 👈 마커 저장
+
+                const info = new kakao.maps.InfoWindow({
+                  content: `<div style="padding:5px;font-size:13px;"><strong>${name}</strong><br>💰 ${priceStr}만원<br>📐 ${areaStr}㎡</div>`
+                });
+
+                kakao.maps.event.addListener(marker, 'mouseover', () => info.open(map, marker));
+                kakao.maps.event.addListener(marker, 'mouseout', () => info.close());
+              }
+            }
           });
 
-          new kakao.maps.MarkerClusterer({
-            map: map,
-            markers: markers,
-            gridSize: 60,
-            averageCenter: true,
-            minLevel: 5
+          // 줌 변경 시 마커 표시 제어
+          kakao.maps.event.addListener(map, 'zoom_changed', () => {
+            const level = map.getLevel();
+            markers.forEach(m => m.setMap(level <= 6 ? map : null));
           });
         });
+      });
+  });
+
+  function getWorkCoordinates(address, callback) {
+    fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(address)}`, {
+      headers: { Authorization: "KakaoAK 85365dfbcc4b4e710f4b5d5246d462c1" }
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.documents.length > 0) {
+        const loc = data.documents[0];
+        callback(parseFloat(loc.y), parseFloat(loc.x));
+      } else {
+        alert("직장 주소를 찾을 수 없습니다.");
+      }
     });
-  </script>
+  }
+
+  function openPostcode() {
+    new daum.Postcode({
+      oncomplete: function(data) {
+        document.getElementById("work_address").value = data.roadAddress || data.jibunAddress;
+      }
+    }).open();
+  }
+</script>
 </body>
 </html>
