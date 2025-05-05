@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>서울 아파트 추천 지도</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=2a1d00e233291fa1a9b086c963a32336&libraries=services"></script>
+  <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+  <style>
+    body { margin: 0; padding: 0; height: 100vh; display: flex; font-family: 'Segoe UI', sans-serif; }
+    #map { flex-grow: 1; height: 100vh; }
+    .sidebar {
+      width: 340px; background-color: #f9f9f9; padding: 30px;
+      box-shadow: -2px 0 10px rgba(0, 0, 0, 0.1); box-sizing: border-box;
+    }
+    .sidebar label { display: block; margin-top: 15px; font-weight: bold; }
+    .sidebar input[type="number"], .sidebar input[type="text"] {
+      width: 100%; padding: 8px 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px;
+    }
+    .sidebar input[type="checkbox"] { margin-right: 8px; }
+    .sidebar button {
+      margin-top: 20px; width: 100%; padding: 10px;
+      font-size: 16px; background-color: #2a8df4; border: none; color: white;
+      font-weight: bold; border-radius: 6px; cursor: pointer;
+    }
+    .sidebar button:hover { background-color: #1668c4; }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<form method="get" action="/" class="sidebar">
+  <h2>아파트 조건</h2>
+  <label for="budget">예산 (만원)</label>
+  <input type="number" name="budget" id="budget" value="{{ budget }}" required>
+
+  <label for="area">최소 면적 (㎡)</label>
+  <input type="number" name="area" id="area" value="{{ area }}" required>
+  <button type="submit">검색</button>
+
+  <label for="work_address">직장 주소</label>
+  <input type="text" name="work_address" id="work_address" value="{{ work_address or '' }}" readonly required>
+  <button type="button" onclick="openPostcode()">주소 찾기</button>
+  <label><input type="checkbox" name="use_radius" id="use_radius" {{ 'checked' if use_radius else '' }}>직장 위치 반경 10km 필터</label>
+</form>
+
+<script>
+  const userBudget = {{ budget }};
+  const userMinArea = {{ area }};
+  const workAddress = "{{ work_address }}";
+  const useRadius = {{ 'true' if use_radius else 'false' }};
+  const radiusMeter = 10000;
+
+  const markers = [];
+
+  function calculateDistance(lat1, lng1, lat2, lng2) {
+    const linePath = [new kakao.maps.LatLng(lat1, lng1), new kakao.maps.LatLng(lat2, lng2)];
+    return new kakao.maps.Polyline({ path: linePath }).getLength();
+  }
+
+  kakao.maps.load(() => {
+    const map = new kakao.maps.Map(document.getElementById('map'), {
+      center: new kakao.maps.LatLng(37.5665, 126.978),
+      level: 4
+    });
+    map.addOverlayMapTypeId(kakao.maps.MapTypeId.TRAFFIC);
+
+    fetch('/static/csv/apart_total_data.csv')
+      .then(res => res.text())
+      .then(csvText => {
+        const rows = csvText.trim().split("\n");
+        rows.shift(); // header 제거
+
+        getWorkCoordinates(workAddress, (workLat, workLng) => {
+          const workPos = new kakao.maps.LatLng(workLat, workLng);
+
+          new kakao.maps.Marker({
+            position: workPos,
+            map: map,
+            image: new kakao.maps.MarkerImage(
+              "https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png",
+              new kakao.maps.Size(50, 60),
+              { offset: new kakao.maps.Point(25, 60) }
+            ),
+            title: "직장 위치"
+          });
+
+          if (useRadius) {
+            new kakao.maps.Circle({
+              center: workPos,
+              radius: radiusMeter,
+              strokeWeight: 2,
+              strokeColor: "#FF5A5A",
+              strokeOpacity: 0.8,
+              fillColor: "#FFBABA",
+              fillOpacity: 0.3,
+              map: map
+            });
+          }
+
+          map.setCenter(workPos);
+
+          rows.forEach(row => {
+            const [lat, lng, name, priceStr, areaStr] = row.split(',');
+            const price = parseInt(priceStr.replace(/,/g, ''));
+            const area = parseFloat(areaStr);
+            const aptLat = parseFloat(lat);
+            const aptLng = parseFloat(lng);
+
+            if (price <= userBudget && area >= userMinArea) {
+              const distance = calculateDistance(aptLat, aptLng, workLat, workLng);
+              if (!useRadius || distance <= radiusMeter) {
+                const marker = new kakao.maps.Marker({
+                  position: new kakao.maps.LatLng(aptLat, aptLng),
+                  map: map
+                });
+                markers.push(marker);
+
+                const info = new kakao.maps.InfoWindow({
+                  content: `
+                    <div style="padding:5px; font-size:13px; max-width:500px; white-space:normal; word-break:keep-all; line-height:1.5;">
+                      <div><strong style="display:inline;">아파트명:</strong> ${name}</div>
+                      <div>가격: ${priceStr}만원</div>
+                      <div>면적: ${areaStr}㎡</div>
+                      <div>거리: ${(distance / 1000).toFixed(2)}km</div>
+                    </div>
+                  `
+                });
+
+                kakao.maps.event.addListener(marker, 'mouseover', () => info.open(map, marker));
+                kakao.maps.event.addListener(marker, 'mouseout', () => info.close());
+              }
+            }
+          });
+
+          kakao.maps.event.addListener(map, 'zoom_changed', () => {
+            const level = map.getLevel();
+            markers.forEach(m => m.setMap(level <= 5 ? map : null));
+          });
+        });
+      });
+  });
+
+  function getWorkCoordinates(address, callback) {
+    fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(address)}`, {
+      headers: { Authorization: "KakaoAK 85365dfbcc4b4e710f4b5d5246d462c1" }
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.documents.length > 0) {
+        const loc = data.documents[0];
+        callback(parseFloat(loc.y), parseFloat(loc.x));
+      } else {
+        alert("직장 주소를 찾을 수 없습니다.");
+      }
+    });
+  }
+
+  function openPostcode() {
+    new daum.Postcode({
+      oncomplete: function(data) {
+        document.getElementById("work_address").value = data.roadAddress || data.jibunAddress;
+      }
+    }).open();
+  }
+</script>
+</body>
+</html>
