@@ -2,97 +2,147 @@ from flask import Flask, request, jsonify
 from flask import render_template
 import requests
 import pandas as pd
+import time
+import numpy as np
+from math import radians
 
 app = Flask(__name__)
 
 # 카카오 REST API 키
 REST_API_KEY = "85365dfbcc4b4e710f4b5d5246d462c1"
 
-work_location = {}
-
-@app.route("/set_destination", methods=["POST"])
-def set_destination():
+# Main
+# 회사 내 3km 반경 아파트 name, lat, lng 데이터 csv 변경
+@app.route("/send_route_data", methods=["POST"])
+def receive_apartment_data():
     data = request.get_json()
-    lat = data.get("aptLat")
-    lng = data.get("aptLng")
+    apartments = data.get("apartments", [])
+    company = data.get("company", [])
 
-    if lat is not None and lng is not None:
-        destination_location['latlng'].append({"lat": lat, "lng": lng})
+    df = pd.DataFrame(apartments)
+    df.to_csv("static/location_csv/nearby_apartment_latlng.csv", index=False)
 
-        origin = f"{lng}, {lat}"
+    df2 = pd.DataFrame(company)
+    df2.to_csv("static/location_csv/company_latlng.csv", index=False)
 
-        set_destination_to_csv(origin)
+    company_to_apartment()
 
-        return jsonify({"status": "success"})
-    return jsonify({"status": "error", "message": "Error"})
+    return jsonify({"message": "success"})
 
-def set_destination_to_csv(origin):
-    lng, lat = origin.split(", ")
-    df = pd.DataFrame(destination_location["latlng"])
-    df.to_csv("static/csv2/set_destination_latlng.csv", index=False)
-
-@app.route("/set_work_location", methods=["POST"])
-def set_work_location():
-    data = request.get_json()
-    lat = data.get("lat")
-    lng = data.get("lng")
-
-    if lat is not None and lng is not None:
-        work_location['lat'] = lat
-        work_location['lng'] = lng
-        print("받은 직장 좌표:", lat, lng)
-        # 서울시청(Test)
-        origin = f"{lng},{lat}"
-
-        set_work_location_to_csv(origin)
-
-        return jsonify({"status": "success", "origin": origin})
-    return jsonify({"status": "error", "message": "error"})
-
-def set_work_location_to_csv(latlng):
+# 회사 -> 거주지 도로 좌표 
+def company_to_apartment():
     # kakao mobility API
     url = "https://apis-navi.kakaomobility.com/v1/directions"
     headers = {
         "Authorization": f"KakaoAK {REST_API_KEY}",
         "Content-Type": "application/json"
     }
-        
-    # 목적지(10km 내 아파트)
-    destination = pd.read_csv("static/csv2/set_destination_latlng.csv")
 
+    # 출발지
+    company_latlng = pd.read_csv("static/location_csv/company_latlng.csv")
+    company_latlng.columns = ['lat', 'lng']
+    lat = company_latlng.iloc[0]['lat']
+    lng = company_latlng.iloc[0]['lng']
+    company_coords = f"{lng}, {lat}"
+
+    # 목적지(5km 내 아파트)
+    destination = pd.read_csv("static/location_csv/nearby_apartment_latlng.csv")
+
+    # 모든 출발지 -> 목적지 리스트
+    all_coords = []
     for _, row in destination.iterrows():
+        apt_name = row['name']
         destination = f"{row['lng']}, {row['lat']}"
         params = {
-            "origin": latlng,
+            "origin": company_coords,
             "destination": destination,
             "priority": "RECOMMEND",
             "car_fuel": "GASOLINE",
             "car_hipass": False
-        }   
+        }     
 
-    # 요청 보내기
-    response = requests.get(url, headers=headers, params=params)
-    data = response.json()
+        # 요청 보내기
+        response = requests.get(url, headers=headers, params=params)
+        data = response.json()
+        print(data)
 
-    # 도로 경로상의 vertex 좌표 추출
-    all_coords = []
 
-    for section in data['routes'][0]['sections']:
-        for road in section['roads']:
-            vertexes = road['vertexes']
-            # (lon, lat) 묶음으로 변환
-            coords = list(zip(vertexes[1::2], vertexes[::2]))
-            all_coords.extend(coords)
+        if 'routes' in data and data['routes']:
+            route = data['routes'][0]
 
-    # 결과 출력
-    print("총 좌표 수:", len(all_coords))
-    for i, (lng, lat) in enumerate(all_coords[:]): 
-        print(f"{i+1}: {lng}, {lat}")
+            if route.get('result_code') == 0 and 'sections' in route:
+                for section in route['sections']:
+                    for road in section.get('roads', []):
+                        vertexes = road.get('vertexes', [])
+                        coords = list(zip(vertexes[::2], vertexes[1::2]))
 
-    df = pd.DataFrame(all_coords)
-    df.to_csv("static/csv2/set_work_location_latlng.csv", index=False)
+                        for lat, lng in coords:
+                            all_coords.append({
+                                "apartment": apt_name,
+                                "lat": lat,
+                                "lng": lng
+                            })
+        time.sleep(0.2)       
 
-destination_location = { "latlng" : []}
+        # to_csv
+        df = pd.DataFrame(all_coords)
+        df.to_csv("static/location_csv/doro_latlng.csv", index=False, header=False)
+        
+        # 교통량 측정
+        traffic_cal()
+
+# 출발지 -> 목적지 교통량 측정
+## doro_latlng.csv의 목적지까지 도로 좌표 + linkid_coords_traffic.csv의 교통량 사용
+## 도로 좌표에서 10m 이내 좌표 시 트래픽 합산산
+def traffic_cal():
+    route_df = pd.read_csv("static/location_csv/doro_latlng.csv", header=None)
+    route_df.columns = ['apartment', 'lng', 'lat']
+        
+    traffic_df = pd.read_csv("static/location_csv/linkid_coords_traffic.csv")
+    traffic_df = traffic_df[['lat', 'lng', '전일']]
+
+    apartment_info = pd.read_csv("static/location_csv/nearby_apartment_latlng.csv")
+
+    # numpy 배열로 변환 (도로)
+    traffic_coords = traffic_df[['lat', 'lng']].to_numpy()
+    traffic_volumes = traffic_df['전일'].to_numpy()
+
+    # 거리 계산 함수 (벡터화)
+    def haversine_vector(lat1, lng1, lat2_array, lng2_array):
+        R = 6371000
+        dlat = np.radians(lat2_array - lat1)
+        dlon = np.radians(lng2_array - lng1)
+        a = np.sin(dlat / 2)**2 + np.cos(radians(lat1)) * np.cos(np.radians(lat2_array)) * np.sin(dlon / 2)**2
+        c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+        return R * c
+
+    results = []
+
+    # 아파트별 경로를 순회
+    for apt_name in route_df['apartment'].unique():
+        route_points = route_df[route_df['apartment'] == apt_name][['lat', 'lng']].to_numpy()
+        total_traffic = 0
+
+        for lat1, lng1 in route_points:
+            distances = haversine_vector(lat1, lng1, traffic_coords[:, 0], traffic_coords[:, 1])
+            # 20m 내 좌표
+            matched = distances <= 10
+            total_traffic += traffic_volumes[matched].sum()
+
+        # 아파트 본 좌표 가져오기
+        apt_row = apartment_info[apartment_info['name'] == apt_name]
+        if not apt_row.empty:
+            apt_lat = apt_row.iloc[0]['lat']
+            apt_lng = apt_row.iloc[0]['lng']
+            results.append({
+                'apartment': apt_name,
+                'lat': apt_lat,
+                'lng': apt_lng,
+                'total_traffic': total_traffic
+            })
+
+    result_df = pd.DataFrame(results)
+    result_df.to_csv("static/location_csv/traffic_cal.csv")
 
 def map():
     return render_template("index.html")

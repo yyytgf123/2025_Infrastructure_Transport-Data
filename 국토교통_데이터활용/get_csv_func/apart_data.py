@@ -28,7 +28,7 @@ def apart_get_area():
 * 좌표
 * 아파트명
 * 금액
-* 면적적
+* 면적
 """
 def total_data():
     t_data = []
