@@ -125,7 +125,7 @@ def traffic_cal():
 
         for lat1, lng1 in route_points:
             distances = haversine_vector(lat1, lng1, traffic_coords[:, 0], traffic_coords[:, 1])
-            # 20m 내 좌표
+            # 10m 내 좌표
             matched = distances <= 10
             total_traffic += traffic_volumes[matched].sum()
 

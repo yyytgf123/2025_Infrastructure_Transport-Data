@@ -112,7 +112,7 @@
         getWorkCoordinates(workAddress, (workLat, workLng) => {
           const workPos = new kakao.maps.LatLng(workLat, workLng);
           company_latlng.push({ workLat, workLng });
-          // 직장 주소 검색 시 이동동
+          // 직장 주소 검색 시 이동
           map.setCenter(workPos);
 
           new kakao.maps.Marker({
@@ -198,10 +198,21 @@
 
           map.setCenter(workPos);
 
+          let max_total_traffic = 0;
+            trafficData.forEach(apt => {
+              const traffic = parseFloat(apt.total_traffic);
+              if (!isNaN(traffic) && traffic > max_total_traffic) {
+                max_total_traffic = traffic;
+              }
+            });
+
           trafficData.forEach(apt => {
             const dist = calculateDistance(parseFloat(apt.lat), parseFloat(apt.lng), workLat, workLng);
             if (dist <= 3000) {
-              const percent = parseFloat(apt.traffic_percent);
+              const traffic = parseFloat(apt.total_traffic);
+              if (isNaN(traffic) || max_total_traffic === 0) return;
+
+              const percent = (traffic / max_total_traffic) * 100;
               let color = "00AA00";
               if (percent > 60) color = "FF0000";
               else if (percent > 30) color = "FF9900";
